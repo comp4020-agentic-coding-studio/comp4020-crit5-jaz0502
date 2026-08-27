@@ -2,7 +2,31 @@
 import Layout from "../layouts/Layout.astro";
 ---
 
-<Layout title="COMP4020 prototype" description="Replace this with one sentence saying what this page is.">
-  <h1>COMP4020 prototype</h1>
-  <p>Replace this with your prototype.</p>
+<Layout title="Wall tennis" description="A pong-against-a-wall prototype: keep the ball off the ground.">
+  <h1 class="visually-hidden">Wall tennis</h1>
+  <canvas id="game" aria-label="Wall tennis game"></canvas>
 </Layout>
+
+<style>
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  #game {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+</style>
+
+<script>
+  import { startWallTennis } from "../game/wall-tennis-view";
+
+  const canvas = document.querySelector<HTMLCanvasElement>("#game");
+  if (canvas) startWallTennis(canvas);
+</script>
