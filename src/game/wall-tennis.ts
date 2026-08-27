@@ -14,9 +14,13 @@
 
 export const ARENA_HEIGHT = 800;
 
-const PADDLE_WIDTH_RATIO = 90 / 480; // paddle covers this fraction of the arena's width
+const PADDLE_WIDTH_RATIO = 45 / 480; // paddle covers this fraction of the arena's width
 const PADDLE_HEIGHT = 14;
-export const PADDLE_Y = ARENA_HEIGHT - 40;
+// Kept well clear of the bottom edge --- the racquet sprite drawn at this
+// line (see wall-tennis-view.ts) is tilted and tall (a full handle below the
+// head), so it needs real headroom below the paddle line or its handle runs
+// off the bottom of the canvas.
+export const PADDLE_Y = ARENA_HEIGHT - 220;
 const BALL_RADIUS = 8;
 const BASE_SPEED = 380; // px/s
 const SPEED_GAIN_PER_HIT = 1.04;
