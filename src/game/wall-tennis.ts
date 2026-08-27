@@ -3,13 +3,20 @@
 // exercises directly. Rendering, input and the game loop live in
 // wall-tennis-view.ts instead, where they can be playtested but not unit
 // tested.
+//
+// The arena's height is fixed, but its width isn't: the view picks a width
+// that matches the actual screen's aspect ratio, so the game fills a laptop
+// screen edge to edge instead of sitting in a phone-shaped column in the
+// middle of it. Everything vertical (speeds, the paddle's line) is tuned
+// against ARENA_HEIGHT; everything horizontal is proportional to whatever
+// arenaWidth the caller passes in, so the game stays equally hard regardless
+// of aspect ratio.
 
-export const ARENA_WIDTH = 480;
 export const ARENA_HEIGHT = 800;
 
-const PADDLE_WIDTH = 90;
+const PADDLE_WIDTH_RATIO = 90 / 480; // paddle covers this fraction of the arena's width
 const PADDLE_HEIGHT = 14;
-const PADDLE_Y = ARENA_HEIGHT - 40;
+export const PADDLE_Y = ARENA_HEIGHT - 40;
 const BALL_RADIUS = 8;
 const BASE_SPEED = 380; // px/s
 const SPEED_GAIN_PER_HIT = 1.04;
@@ -46,8 +53,13 @@ export interface StepConfig {
   maxBounceAngle?: number;
 }
 
-export function createInitialState(paddleCenterX: number = ARENA_WIDTH / 2): GameState {
-  const paddle: Paddle = { x: paddleCenterX, y: PADDLE_Y, width: PADDLE_WIDTH, height: PADDLE_HEIGHT };
+export function createInitialState(arenaWidth: number, paddleCenterX: number = arenaWidth / 2): GameState {
+  const paddle: Paddle = {
+    x: paddleCenterX,
+    y: PADDLE_Y,
+    width: arenaWidth * PADDLE_WIDTH_RATIO,
+    height: PADDLE_HEIGHT,
+  };
   return {
     paddle,
     ball: {
@@ -107,20 +119,26 @@ function withWallBounces(ball: Ball, arenaWidth: number): Ball {
   return { ...ball, x, y, vx, vy };
 }
 
-export function step(state: GameState, dtMs: number, paddleCenterX: number, config: StepConfig = {}): GameState {
+export function step(
+  state: GameState,
+  dtMs: number,
+  paddleCenterX: number,
+  arenaWidth: number,
+  config: StepConfig = {},
+): GameState {
   if (state.status === "lost") return state;
 
   const speedGainPerHit = config.speedGainPerHit ?? SPEED_GAIN_PER_HIT;
   const maxSpeed = config.maxSpeed ?? MAX_SPEED;
   const dt = dtMs / 1000;
 
-  const paddle: Paddle = { ...state.paddle, x: paddleCenterX };
+  const paddle: Paddle = { ...state.paddle, x: paddleCenterX, width: arenaWidth * PADDLE_WIDTH_RATIO };
   const moved: Ball = {
     ...state.ball,
     x: state.ball.x + state.ball.vx * dt,
     y: state.ball.y + state.ball.vy * dt,
   };
-  const bounced = withWallBounces(moved, ARENA_WIDTH);
+  const bounced = withWallBounces(moved, arenaWidth);
 
   if (hasMissedPaddle(bounced, paddle, ARENA_HEIGHT)) {
     return { ...state, ball: bounced, paddle, status: "lost" };

@@ -37,7 +37,7 @@ describe("step", () => {
       status: "playing",
       hits: 0,
     };
-    const next = step(state, 16, paddle.x);
+    const next = step(state, 16, paddle.x, 480);
     expect(next.status).toBe("lost");
   });
 
@@ -48,7 +48,7 @@ describe("step", () => {
       status: "playing",
       hits: 0,
     };
-    const next = step(state, 16, paddle.x);
+    const next = step(state, 16, paddle.x, 480);
     expect(next.status).toBe("playing");
     expect(next.ball.vy).toBeLessThan(0);
     expect(next.hits).toBe(1);
