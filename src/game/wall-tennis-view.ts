@@ -272,6 +272,205 @@ function drawBall(ctx: CanvasRenderingContext2D, ball: { x: number; y: number; r
   ctx.restore();
 }
 
+// Retro 7-segment scoreboard, gold-bezelled plaque to match the racquet's
+// frame colours. Unlit segments are drawn as a faint ghost of the on colour
+// --- the standard real-LED-display look --- instead of just leaving a gap,
+// so every digit reads as a digit even when most of its segments are off.
+const SCORE_DIGIT_WIDTH = 22;
+const SCORE_DIGIT_HEIGHT = 34;
+const SCORE_DIGIT_GAP = 8;
+const SCORE_SEGMENT_THICKNESS_RATIO = 0.22; // of digit width
+const SCORE_SEGMENT_GAP = 1.5; // shrinks each bar slightly so adjoining segments read as separate
+const SCORE_PANEL_PADDING_X = 14;
+const SCORE_PANEL_PADDING_Y = 10;
+const SCORE_PANEL_MARGIN = 16; // gap from the top and right edges of the arena
+const SCORE_PANEL_BORDER = 4;
+const SCORE_ON_COLOR = "#ff5a36";
+const SCORE_OFF_COLOR = "rgba(255, 90, 54, 0.14)";
+const SCORE_PANEL_BG = "#12141c";
+const SCORE_PANEL_BEZEL = "#f0c040";
+const SCORE_LABEL_TEXT = "SCORE:";
+const SCORE_LABEL_FONT = "bold 16px 'Courier New', monospace";
+const SCORE_LABEL_GAP = 10; // between the label and the first digit
+
+// Which of the seven segments (a: top, b: top-right, c: bottom-right,
+// d: bottom, e: bottom-left, f: top-left, g: middle) are lit for each digit.
+const DIGIT_SEGMENTS: readonly (readonly boolean[])[] = [
+  [true, true, true, true, true, true, false], // 0
+  [false, true, true, false, false, false, false], // 1
+  [true, true, false, true, true, false, true], // 2
+  [true, true, true, true, false, false, true], // 3
+  [false, true, true, false, false, true, true], // 4
+  [true, false, true, true, false, true, true], // 5
+  [true, false, true, true, true, true, true], // 6
+  [true, true, true, false, false, false, false], // 7
+  [true, true, true, true, true, true, true], // 8
+  [true, true, true, true, false, true, true], // 9
+];
+
+function drawSevenSegmentDigit(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, digit: number) {
+  const segments = DIGIT_SEGMENTS[digit];
+  const t = w * SCORE_SEGMENT_THICKNESS_RATIO;
+  const halfH = (h - 3 * t) / 2;
+  const gap = SCORE_SEGMENT_GAP;
+
+  const bar = (sx: number, sy: number, sw: number, sh: number, lit: boolean) => {
+    ctx.fillStyle = lit ? SCORE_ON_COLOR : SCORE_OFF_COLOR;
+    ctx.fillRect(x + sx, y + sy, sw, sh);
+  };
+
+  bar(t + gap, 0, w - 2 * t - 2 * gap, t, segments[0]); // a
+  bar(w - t, t + gap, t, halfH - 2 * gap, segments[1]); // b
+  bar(w - t, t + halfH + t + gap, t, halfH - 2 * gap, segments[2]); // c
+  bar(t + gap, h - t, w - 2 * t - 2 * gap, t, segments[3]); // d
+  bar(0, t + halfH + t + gap, t, halfH - 2 * gap, segments[4]); // e
+  bar(0, t + gap, t, halfH - 2 * gap, segments[5]); // f
+  bar(t + gap, t + halfH, w - 2 * t - 2 * gap, t, segments[6]); // g
+}
+
+function drawScoreboard(ctx: CanvasRenderingContext2D, arenaWidth: number, hits: number) {
+  const digits = String(hits).split("").map(Number);
+  const digitsWidth = digits.length * SCORE_DIGIT_WIDTH + (digits.length - 1) * SCORE_DIGIT_GAP;
+
+  ctx.font = SCORE_LABEL_FONT;
+  const labelWidth = ctx.measureText(SCORE_LABEL_TEXT).width;
+
+  const contentWidth = labelWidth + SCORE_LABEL_GAP + digitsWidth;
+  const panelWidth = contentWidth + SCORE_PANEL_PADDING_X * 2;
+  const panelHeight = SCORE_DIGIT_HEIGHT + SCORE_PANEL_PADDING_Y * 2;
+  const panelX = arenaWidth - panelWidth - SCORE_PANEL_MARGIN;
+  const panelY = SCORE_PANEL_MARGIN;
+
+  ctx.fillStyle = SCORE_PANEL_BEZEL;
+  ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+  ctx.fillStyle = SCORE_PANEL_BG;
+  ctx.fillRect(
+    panelX + SCORE_PANEL_BORDER,
+    panelY + SCORE_PANEL_BORDER,
+    panelWidth - SCORE_PANEL_BORDER * 2,
+    panelHeight - SCORE_PANEL_BORDER * 2,
+  );
+
+  const labelX = panelX + SCORE_PANEL_PADDING_X;
+  ctx.font = SCORE_LABEL_FONT;
+  ctx.fillStyle = SCORE_PANEL_BEZEL;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(SCORE_LABEL_TEXT, labelX, panelY + panelHeight / 2);
+
+  const digitsStartX = labelX + labelWidth + SCORE_LABEL_GAP;
+  const digitsY = panelY + SCORE_PANEL_PADDING_Y;
+  digits.forEach((digit, i) => {
+    const dx = digitsStartX + i * (SCORE_DIGIT_WIDTH + SCORE_DIGIT_GAP);
+    drawSevenSegmentDigit(ctx, dx, digitsY, SCORE_DIGIT_WIDTH, SCORE_DIGIT_HEIGHT, digit);
+  });
+}
+
+// Game-over overlay: a dark plaque (same bezel styling as the scoreboard),
+// centered in the arena, shown for as long as state.status is "lost".
+const GAME_OVER_TITLE = "GAME OVER";
+const GAME_OVER_TITLE_FONT = "bold 48px 'Courier New', monospace";
+const GAME_OVER_SUBTITLE_FONT = "bold 22px 'Courier New', monospace";
+const GAME_OVER_TITLE_SIZE = 48;
+const GAME_OVER_SUBTITLE_SIZE = 22;
+const GAME_OVER_LINE_GAP = 14;
+const GAME_OVER_PANEL_PADDING_X = 40;
+const GAME_OVER_PANEL_PADDING_Y = 28;
+const GAME_OVER_TEXT_COLOR = "#f8fafc";
+
+// "New game" button, sitting under the final score inside the same plaque.
+// Drawn on the canvas rather than as a real DOM element --- everything else
+// in this view is canvas-drawn, so the click is hit-tested against the
+// bounds this function hands back (see startWallTennis's pointer handler)
+// instead of relying on the DOM's own hit-testing.
+const NEW_GAME_BUTTON_TEXT = "NEW GAME";
+const NEW_GAME_BUTTON_FONT = "bold 22px 'Courier New', monospace";
+const NEW_GAME_BUTTON_FONT_SIZE = 22;
+const NEW_GAME_BUTTON_PADDING_X = 28;
+const NEW_GAME_BUTTON_PADDING_Y = 14;
+const NEW_GAME_BUTTON_GAP = 24; // above the button, below the final-score line
+const NEW_GAME_BUTTON_BORDER = 3;
+const NEW_GAME_BUTTON_BG = "#3fae7a"; // matches the racquet handle's green
+const NEW_GAME_BUTTON_BORDER_COLOR = "#1e2a5e"; // matches the handle's navy collar bands
+const NEW_GAME_BUTTON_TEXT_COLOR = "#0b1220";
+
+export interface ButtonBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function drawGameOverOverlay(ctx: CanvasRenderingContext2D, arenaWidth: number, hits: number): ButtonBounds {
+  const centerX = arenaWidth / 2;
+  const centerY = ARENA_HEIGHT / 2;
+  const subtitleText = `Final score: ${hits}`;
+
+  ctx.font = GAME_OVER_TITLE_FONT;
+  const titleWidth = ctx.measureText(GAME_OVER_TITLE).width;
+  ctx.font = GAME_OVER_SUBTITLE_FONT;
+  const subtitleWidth = ctx.measureText(subtitleText).width;
+  ctx.font = NEW_GAME_BUTTON_FONT;
+  const buttonWidth = ctx.measureText(NEW_GAME_BUTTON_TEXT).width + NEW_GAME_BUTTON_PADDING_X * 2;
+  const buttonHeight = NEW_GAME_BUTTON_FONT_SIZE + NEW_GAME_BUTTON_PADDING_Y * 2;
+
+  const panelWidth = Math.max(titleWidth, subtitleWidth, buttonWidth) + GAME_OVER_PANEL_PADDING_X * 2;
+  const panelHeight =
+    GAME_OVER_TITLE_SIZE +
+    GAME_OVER_LINE_GAP +
+    GAME_OVER_SUBTITLE_SIZE +
+    NEW_GAME_BUTTON_GAP +
+    buttonHeight +
+    GAME_OVER_PANEL_PADDING_Y * 2;
+  const panelX = centerX - panelWidth / 2;
+  const panelY = centerY - panelHeight / 2;
+
+  ctx.fillStyle = SCORE_PANEL_BEZEL;
+  ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+  ctx.fillStyle = SCORE_PANEL_BG;
+  ctx.fillRect(
+    panelX + SCORE_PANEL_BORDER,
+    panelY + SCORE_PANEL_BORDER,
+    panelWidth - SCORE_PANEL_BORDER * 2,
+    panelHeight - SCORE_PANEL_BORDER * 2,
+  );
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = GAME_OVER_TITLE_FONT;
+  ctx.fillStyle = GAME_OVER_TEXT_COLOR;
+  ctx.fillText(GAME_OVER_TITLE, centerX, panelY + GAME_OVER_PANEL_PADDING_Y + GAME_OVER_TITLE_SIZE / 2);
+
+  const subtitleY = panelY + GAME_OVER_PANEL_PADDING_Y + GAME_OVER_TITLE_SIZE + GAME_OVER_LINE_GAP + GAME_OVER_SUBTITLE_SIZE / 2;
+  ctx.font = GAME_OVER_SUBTITLE_FONT;
+  ctx.fillStyle = SCORE_ON_COLOR;
+  ctx.fillText(subtitleText, centerX, subtitleY);
+
+  const buttonX = centerX - buttonWidth / 2;
+  const buttonY = subtitleY + GAME_OVER_SUBTITLE_SIZE / 2 + NEW_GAME_BUTTON_GAP;
+
+  ctx.fillStyle = NEW_GAME_BUTTON_BORDER_COLOR;
+  ctx.fillRect(
+    buttonX - NEW_GAME_BUTTON_BORDER,
+    buttonY - NEW_GAME_BUTTON_BORDER,
+    buttonWidth + NEW_GAME_BUTTON_BORDER * 2,
+    buttonHeight + NEW_GAME_BUTTON_BORDER * 2,
+  );
+  ctx.fillStyle = NEW_GAME_BUTTON_BG;
+  ctx.fillRect(buttonX, buttonY, buttonWidth, buttonHeight);
+
+  ctx.font = NEW_GAME_BUTTON_FONT;
+  ctx.fillStyle = NEW_GAME_BUTTON_TEXT_COLOR;
+  ctx.fillText(NEW_GAME_BUTTON_TEXT, centerX, buttonY + buttonHeight / 2);
+
+  return { x: buttonX, y: buttonY, width: buttonWidth, height: buttonHeight };
+}
+
+function isInsideBounds(x: number, y: number, bounds: ButtonBounds): boolean {
+  return x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height;
+}
+
 export function startWallTennis(canvas: HTMLCanvasElement): () => void {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("2D canvas context unavailable");
@@ -284,6 +483,7 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
   let launched = false;
   let hitsSeen = 0;
   let squashTimer = 0;
+  let newGameButtonBounds: ButtonBounds | null = null;
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -307,17 +507,42 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
     return ((clientX - rect.left) * dpr) / scale;
   }
 
+  function toArenaY(clientY: number): number {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const { scale } = arenaTransform();
+    return ((clientY - rect.top) * dpr) / scale;
+  }
+
   resize();
   let state: GameState = createInitialState(arenaTransform().arenaWidth);
   pointerX = state.paddle.x;
 
+  // While the round is lost, the ball's frozen and the paddle no longer
+  // follows the pointer --- the only way back into a fresh round is clicking
+  // the "New game" button drawn inside the game-over plaque.
   function onPointer(event: PointerEvent) {
     const { arenaWidth } = arenaTransform();
-    pointerX = Math.max(0, Math.min(arenaWidth, toArenaX(event.clientX)));
+    const arenaX = Math.max(0, Math.min(arenaWidth, toArenaX(event.clientX)));
+
     if (state.status === "lost") {
-      state = createInitialState(arenaWidth, pointerX);
-      hitsSeen = 0;
+      const arenaY = toArenaY(event.clientY);
+      const overButton = newGameButtonBounds !== null && isInsideBounds(arenaX, arenaY, newGameButtonBounds);
+      canvas.style.cursor = overButton ? "pointer" : "default";
+      if (event.type === "pointerdown" && overButton) {
+        // Always re-center horizontally --- the ball (and the paddle under
+        // it) start from the arena's midpoint, not wherever the player
+        // happened to click the button.
+        state = createInitialState(arenaWidth);
+        pointerX = state.paddle.x;
+        hitsSeen = 0;
+        launched = false;
+      }
+      return;
     }
+
+    canvas.style.cursor = "default";
+    pointerX = arenaX;
     launched = true;
   }
 
@@ -345,10 +570,8 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
     drawBall(ctx, state.ball, squashAmount);
 
     ctx.globalAlpha = 1;
-    ctx.fillStyle = "#f8fafc";
-    ctx.font = "28px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(String(state.hits), arenaWidth / 2, 44);
+    drawScoreboard(ctx, arenaWidth, state.hits);
+    newGameButtonBounds = state.status === "lost" ? drawGameOverOverlay(ctx, arenaWidth, state.hits) : null;
 
     ctx.restore();
   }
