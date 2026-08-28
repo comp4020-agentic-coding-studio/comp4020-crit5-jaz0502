@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { hasMissedPaddle, step, type Ball, type GameState, type Paddle } from "../src/game/wall-tennis";
+import {
+  hasMissedPaddle,
+  resolveObstacleCollision,
+  step,
+  type Ball,
+  type GameState,
+  type Obstacle,
+  type Paddle,
+} from "../src/game/wall-tennis";
 
 // The one rule the week's spec calls for a focused automated test on: the
 // ball reaching the paddle's line is a miss unless the paddle is under it.
@@ -52,5 +60,28 @@ describe("step", () => {
     expect(next.status).toBe("playing");
     expect(next.ball.vy).toBeLessThan(0);
     expect(next.hits).toBe(1);
+  });
+});
+
+describe("resolveObstacleCollision", () => {
+  const obstacle: Obstacle = { x: 200, y: 300, width: 60, height: 20 };
+
+  it("flips vx when the ball hits a side", () => {
+    const ball: Ball = { x: 165, y: 300, vx: 100, vy: 0, radius: 8 };
+    const result = resolveObstacleCollision(ball, obstacle);
+    expect(result).not.toBeNull();
+    expect(result!.vx).toBeLessThan(0);
+  });
+
+  it("flips vy when the ball hits the top", () => {
+    const ball: Ball = { x: 200, y: 285, vx: 0, vy: 100, radius: 8 };
+    const result = resolveObstacleCollision(ball, obstacle);
+    expect(result).not.toBeNull();
+    expect(result!.vy).toBeLessThan(0);
+  });
+
+  it("returns null when the ball doesn't overlap the obstacle", () => {
+    const ball: Ball = { x: 0, y: 0, vx: 0, vy: 200, radius: 8 };
+    expect(resolveObstacleCollision(ball, obstacle)).toBeNull();
   });
 });

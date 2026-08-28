@@ -2,7 +2,15 @@
 // the DOM or the canvas, so none of it is unit tested --- it's playtested by
 // hand instead. Physics and rules live in wall-tennis.ts.
 
-import { ARENA_HEIGHT, PADDLE_Y, createInitialState, step, type GameState } from "./wall-tennis";
+import {
+  ARENA_HEIGHT,
+  PADDLE_Y,
+  createInitialState,
+  obstaclesForArena,
+  step,
+  type GameState,
+  type Obstacle,
+} from "./wall-tennis";
 
 const FIXED_DT_MS = 1000 / 120; // physics substep, decoupled from the display's frame rate
 const MAX_FRAME_MS = 250; // clamp a huge gap (backgrounded tab) instead of catching up in a burst
@@ -231,6 +239,32 @@ function drawRacquet(ctx: CanvasRenderingContext2D, paddle: { x: number; y: numb
   ctx.scale(scale, scale);
   ctx.drawImage(racquetSprite, -RACQUET_HEAD_CENTER_X, -RACQUET_HEAD_CENTER_Y);
   ctx.restore();
+}
+
+// Static court obstacles: flat bezel-style blocks matching the plaques used
+// elsewhere in this view, so they read as part of the same UI language
+// rather than a bolted-on extra.
+const OBSTACLE_FILL = "#8a8f9c";
+const OBSTACLE_BORDER = "#3d4150";
+const OBSTACLE_BORDER_WIDTH = 3;
+
+function drawObstacle(ctx: CanvasRenderingContext2D, obstacle: Obstacle) {
+  const x = obstacle.x - obstacle.width / 2;
+  const y = obstacle.y - obstacle.height / 2;
+
+  ctx.fillStyle = OBSTACLE_BORDER;
+  ctx.fillRect(
+    x - OBSTACLE_BORDER_WIDTH,
+    y - OBSTACLE_BORDER_WIDTH,
+    obstacle.width + OBSTACLE_BORDER_WIDTH * 2,
+    obstacle.height + OBSTACLE_BORDER_WIDTH * 2,
+  );
+  ctx.fillStyle = OBSTACLE_FILL;
+  ctx.fillRect(x, y, obstacle.width, obstacle.height);
+}
+
+function drawObstacles(ctx: CanvasRenderingContext2D, arenaWidth: number) {
+  for (const obstacle of obstaclesForArena(arenaWidth)) drawObstacle(ctx, obstacle);
 }
 
 // Tennis-yellow ball with a couple of curved seam lines, a soft shadow for
@@ -564,6 +598,8 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
     drawCourt(ctx, arenaWidth);
 
     ctx.globalAlpha = state.status === "lost" ? 0.4 : 1;
+
+    drawObstacles(ctx, arenaWidth);
 
     const squashAmount = squashTimer / SQUASH_DURATION_MS;
     drawRacquet(ctx, state.paddle);
