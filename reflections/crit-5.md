@@ -1,0 +1,7 @@
+1. What was the breakthrough that moved the work forward? 
+
+The breakthrough that moved the work forward came from thinking about tennis differently. I thought about how, in tennis, there is one opponent that you can never beat: the wall. I decided to turn this into a tennis wall game, where the player repeatedly hits a ball against a wall and tries to keep the rally going for as long as possible. This gave me a simple mechanic with an obvious goal, while still leaving room for difficulty to increase through the speed and trajectory of the ball. Instead of trying to design a complicated game with many rules, I could focus on making one simple and obvious interaction work well.
+
+2. What did this work change about who I want to be as a software developer?
+
+This work made me think more about the role I want to have as a software developer when working with AI. While AI is very useful for writing code, it does not always produce an output that matches what I have imagined. For example, I had difficulty getting the pixelated old video game style I wanted for the racquet. I had to iterate on my prompts and give Claude feedback numerous times before getting an output I was happy with. This showed me how important it is for a human to remain in the loop. I want to be a developer who can clearly direct AI, critically evaluate its output, and recognise when something needs to be changed rather than simply accepting what it produces.
