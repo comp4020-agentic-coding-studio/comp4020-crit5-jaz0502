@@ -44,6 +44,10 @@ describe("step", () => {
       ball: ballAt(paddle.x + paddle.width, paddle.y - paddle.height / 2 - 1),
       status: "playing",
       hits: 0,
+      elapsedMs: 0,
+      score: 0,
+      target: null,
+      nextTargetAtMs: Infinity,
     };
     const next = step(state, 16, paddle.x, 480);
     expect(next.status).toBe("lost");
@@ -55,6 +59,10 @@ describe("step", () => {
       ball: ballAt(paddle.x, paddle.y - paddle.height / 2 - 1),
       status: "playing",
       hits: 0,
+      elapsedMs: 0,
+      score: 0,
+      target: null,
+      nextTargetAtMs: Infinity,
     };
     const next = step(state, 16, paddle.x, 480);
     expect(next.status).toBe("playing");

@@ -30,7 +30,7 @@ const PADDLE_HEIGHT = 14;
 export const PADDLE_Y = ARENA_HEIGHT - 220;
 const BALL_RADIUS = 8;
 const BASE_SPEED = 380; // px/s
-const SPEED_GAIN_PER_HIT = 1.07;
+const SPEED_GAIN_PER_HIT = 1.04;
 const MAX_SPEED = BASE_SPEED * 2;
 const MAX_BOUNCE_ANGLE = (60 * Math.PI) / 180; // radians off vertical, at the paddle's edge
 
@@ -51,28 +51,52 @@ export interface Paddle {
 
 export type GameStatus = "playing" | "lost";
 
+// A bonus target the ball can pass through for extra score, on top of the
+// paddle-rally point it already earns hitting the ball back. Independent of
+// hits/paddleWidthForHits --- rally length still drives the difficulty ramp,
+// targets are a separate side objective that just adds to score.
+export interface Target {
+  x: number; // center x
+  y: number; // center y
+  radius: number;
+  points: number;
+  expiresAtMs: number; // elapsedMs at which it vanishes if not hit
+}
+
 export interface GameState {
   ball: Ball;
   paddle: Paddle;
   status: GameStatus;
   hits: number;
+  elapsedMs: number;
+  score: number;
+  target: Target | null;
+  nextTargetAtMs: number; // elapsedMs at which the next target may spawn
 }
 
 export interface StepConfig {
   speedGainPerHit?: number;
   maxSpeed?: number;
   maxBounceAngle?: number;
+  rng?: () => number; // injectable for deterministic tests; defaults to Math.random
 }
 
 // Static blocks the ball can bounce off, sitting between the top wall and
 // the paddle's row so they're something to deflect around rather than a wall
-// that blocks a straight shot. Derived from arenaWidth rather than stored in
-// GameState, same reasoning as paddleWidthForHits: always an exact function
-// of its input, no drift, nothing to reset on a new game.
+// that blocks a straight shot. Derived from arenaWidth (and elapsedMs, for
+// their side-to-side drift) rather than stored in GameState, same reasoning
+// as paddleWidthForHits: always an exact function of its inputs, no drift to
+// track, nothing to reset on a new game.
 const OBSTACLE_HEIGHT = 14;
 const OBSTACLE_ROW_Y = ARENA_HEIGHT * 0.62;
 const OBSTACLE_BLOCK_WIDTH_RATIO = 0.22; // of arenaWidth, each block
 const OBSTACLE_GAP_RATIO = 0.3; // of arenaWidth, the gap between the two blocks
+// The pair drifts left and right together (gap between them stays fixed)
+// rather than each block moving independently, so they can never drift into
+// each other. Amplitude is clamped to the margin between the pair and the
+// arena walls (see leftEdge below), so they can never drift off-screen either.
+const OBSTACLE_MOVE_AMPLITUDE_RATIO = 0.12; // of arenaWidth, capped by the wall margin
+const OBSTACLE_MOVE_PERIOD_MS = 4000; // one full left-right-left cycle
 
 export interface Obstacle {
   x: number; // center x
@@ -81,15 +105,17 @@ export interface Obstacle {
   height: number;
 }
 
-export function obstaclesForArena(arenaWidth: number): Obstacle[] {
+export function obstaclesForArena(arenaWidth: number, elapsedMs = 0): Obstacle[] {
   const blockWidth = arenaWidth * OBSTACLE_BLOCK_WIDTH_RATIO;
   const gap = arenaWidth * OBSTACLE_GAP_RATIO;
   const totalWidth = blockWidth * 2 + gap;
   const leftEdge = (arenaWidth - totalWidth) / 2;
+  const amplitude = Math.min(leftEdge, arenaWidth * OBSTACLE_MOVE_AMPLITUDE_RATIO);
+  const offset = amplitude * Math.sin((2 * Math.PI * elapsedMs) / OBSTACLE_MOVE_PERIOD_MS);
 
   return [
-    { x: leftEdge + blockWidth / 2, y: OBSTACLE_ROW_Y, width: blockWidth, height: OBSTACLE_HEIGHT },
-    { x: leftEdge + blockWidth + gap + blockWidth / 2, y: OBSTACLE_ROW_Y, width: blockWidth, height: OBSTACLE_HEIGHT },
+    { x: leftEdge + blockWidth / 2 + offset, y: OBSTACLE_ROW_Y, width: blockWidth, height: OBSTACLE_HEIGHT },
+    { x: leftEdge + blockWidth + gap + blockWidth / 2 + offset, y: OBSTACLE_ROW_Y, width: blockWidth, height: OBSTACLE_HEIGHT },
   ];
 }
 
@@ -144,6 +170,46 @@ export function resolveObstacleCollision(ball: Ball, obstacle: Obstacle): Ball |
   };
 }
 
+// Bonus targets: appear one at a time, at random, for the ball to pass
+// through. Smaller is worth more --- it's the harder shot to land. Unlike
+// obstacles these DO live in GameState (position and size are randomised per
+// spawn, not a pure function of arenaWidth), but nextTargetAtMs/expiresAtMs
+// are plain elapsedMs deadlines rather than timers, so step() stays a pure
+// function of its inputs and a fixed dt sequence always replays identically.
+const TARGET_SMALL_RADIUS = 20;
+const TARGET_SMALL_POINTS = 5;
+const TARGET_LARGE_RADIUS = 30;
+const TARGET_LARGE_POINTS = 3;
+const TARGET_LIFETIME_MS = 3500; // vanishes if not hit within this long
+const TARGET_SPAWN_GAP_MIN_MS = 3000; // gap after a target is hit or expires
+const TARGET_SPAWN_GAP_MAX_MS = 6000;
+const INITIAL_TARGET_DELAY_MS = 2500; // before the very first target of a round
+const TARGET_X_MARGIN_RATIO = 0.18; // of arenaWidth, kept clear of the side walls
+// Kept above the obstacle row so a target never spawns overlapping a block.
+const TARGET_Y_MIN = ARENA_HEIGHT * 0.12;
+const TARGET_Y_MAX = ARENA_HEIGHT * 0.48;
+
+function spawnTarget(arenaWidth: number, elapsedMs: number, rng: () => number): Target {
+  const isSmall = rng() < 0.5;
+  const radius = isSmall ? TARGET_SMALL_RADIUS : TARGET_LARGE_RADIUS;
+  const points = isSmall ? TARGET_SMALL_POINTS : TARGET_LARGE_POINTS;
+  const margin = arenaWidth * TARGET_X_MARGIN_RATIO;
+  const x = margin + rng() * Math.max(0, arenaWidth - margin * 2);
+  const y = TARGET_Y_MIN + rng() * (TARGET_Y_MAX - TARGET_Y_MIN);
+  return { x, y, radius, points, expiresAtMs: elapsedMs + TARGET_LIFETIME_MS };
+}
+
+function nextTargetGap(elapsedMs: number, rng: () => number): number {
+  return elapsedMs + TARGET_SPAWN_GAP_MIN_MS + rng() * (TARGET_SPAWN_GAP_MAX_MS - TARGET_SPAWN_GAP_MIN_MS);
+}
+
+function ballHitsTarget(ball: Ball, target: Target): boolean {
+  const dx = ball.x - target.x;
+  const dy = ball.y - target.y;
+  const reach = ball.radius + target.radius;
+  return dx * dx + dy * dy <= reach * reach;
+}
+
 // Recomputed from scratch every frame (see step() below) rather than shrunk
 // incrementally, so it's always an exact function of hits --- no drift, and
 // no need to carry a running width in GameState.
@@ -170,6 +236,10 @@ export function createInitialState(arenaWidth: number, paddleCenterX: number = a
     },
     status: "playing",
     hits: 0,
+    elapsedMs: 0,
+    score: 0,
+    target: null,
+    nextTargetAtMs: INITIAL_TARGET_DELAY_MS,
   };
 }
 
@@ -229,8 +299,10 @@ export function step(
 
   const speedGainPerHit = config.speedGainPerHit ?? SPEED_GAIN_PER_HIT;
   const maxSpeed = config.maxSpeed ?? MAX_SPEED;
+  const rng = config.rng ?? Math.random;
   const dt = dtMs / 1000;
 
+  const elapsedMs = state.elapsedMs + dtMs;
   const paddle: Paddle = { ...state.paddle, x: paddleCenterX, width: paddleWidthForHits(arenaWidth, state.hits) };
   const moved: Ball = {
     ...state.ball,
@@ -240,7 +312,7 @@ export function step(
   const bounced = withWallBounces(moved, arenaWidth);
 
   let deflected = bounced;
-  for (const obstacle of obstaclesForArena(arenaWidth)) {
+  for (const obstacle of obstaclesForArena(arenaWidth, elapsedMs)) {
     const resolved = resolveObstacleCollision(deflected, obstacle);
     if (resolved) {
       deflected = resolved;
@@ -248,16 +320,41 @@ export function step(
     }
   }
 
+  let target = state.target;
+  let nextTargetAtMs = state.nextTargetAtMs;
+  let score = state.score;
+  if (target && ballHitsTarget(deflected, target)) {
+    score += target.points;
+    target = null;
+    nextTargetAtMs = nextTargetGap(elapsedMs, rng);
+  } else if (target && elapsedMs >= target.expiresAtMs) {
+    target = null;
+    nextTargetAtMs = nextTargetGap(elapsedMs, rng);
+  }
+  if (!target && elapsedMs >= nextTargetAtMs) {
+    target = spawnTarget(arenaWidth, elapsedMs, rng);
+  }
+
   if (hasMissedPaddle(deflected, paddle, ARENA_HEIGHT)) {
-    return { ...state, ball: deflected, paddle, status: "lost" };
+    return { ...state, ball: deflected, paddle, status: "lost", elapsedMs, score, target, nextTargetAtMs };
   }
 
   const hitPaddle = deflected.vy > 0 && deflected.y + deflected.radius >= paddle.y - paddle.height / 2;
   if (hitPaddle) {
     const speed = Math.min(Math.hypot(deflected.vx, deflected.vy) * speedGainPerHit, maxSpeed);
     const reflected = reflectOffPaddle({ ...deflected, vx: 0, vy: -speed }, paddle, config);
-    return { ...state, ball: reflected, paddle, status: "playing", hits: state.hits + 1 };
+    return {
+      ...state,
+      ball: reflected,
+      paddle,
+      status: "playing",
+      hits: state.hits + 1,
+      elapsedMs,
+      score: score + 1,
+      target,
+      nextTargetAtMs,
+    };
   }
 
-  return { ...state, ball: deflected, paddle };
+  return { ...state, ball: deflected, paddle, elapsedMs, score, target, nextTargetAtMs };
 }

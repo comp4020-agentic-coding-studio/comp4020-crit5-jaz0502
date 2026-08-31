@@ -10,6 +10,7 @@ import {
   step,
   type GameState,
   type Obstacle,
+  type Target,
 } from "./wall-tennis";
 
 const FIXED_DT_MS = 1000 / 120; // physics substep, decoupled from the display's frame rate
@@ -263,8 +264,36 @@ function drawObstacle(ctx: CanvasRenderingContext2D, obstacle: Obstacle) {
   ctx.fillRect(x, y, obstacle.width, obstacle.height);
 }
 
-function drawObstacles(ctx: CanvasRenderingContext2D, arenaWidth: number) {
-  for (const obstacle of obstaclesForArena(arenaWidth)) drawObstacle(ctx, obstacle);
+function drawObstacles(ctx: CanvasRenderingContext2D, arenaWidth: number, elapsedMs: number) {
+  for (const obstacle of obstaclesForArena(arenaWidth, elapsedMs)) drawObstacle(ctx, obstacle);
+}
+
+// Bonus target: a red/white bullseye with its point value stamped in the
+// middle, so its worth is legible at a glance without a separate legend ---
+// smaller rings mean fewer, more concentrated rings so the "harder shot,
+// bigger reward" reads visually too.
+const TARGET_RING_COLORS = ["#e63946", "#f1faee", "#e63946"];
+const TARGET_LABEL_COLOR = "#f1faee";
+const TARGET_LABEL_OUTLINE = "#1e2a5e";
+
+function drawTarget(ctx: CanvasRenderingContext2D, target: Target) {
+  const rings = TARGET_RING_COLORS.length;
+  for (let i = rings; i >= 1; i--) {
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, (target.radius * i) / rings, 0, Math.PI * 2);
+    ctx.fillStyle = TARGET_RING_COLORS[rings - i];
+    ctx.fill();
+  }
+
+  ctx.font = `bold ${Math.round(target.radius)}px 'Courier New', monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const label = `${target.points}`;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = TARGET_LABEL_OUTLINE;
+  ctx.strokeText(label, target.x, target.y);
+  ctx.fillStyle = TARGET_LABEL_COLOR;
+  ctx.fillText(label, target.x, target.y);
 }
 
 // Tennis-yellow ball with a couple of curved seam lines, a soft shadow for
@@ -362,8 +391,8 @@ function drawSevenSegmentDigit(ctx: CanvasRenderingContext2D, x: number, y: numb
   bar(t + gap, t + halfH, w - 2 * t - 2 * gap, t, segments[6]); // g
 }
 
-function drawScoreboard(ctx: CanvasRenderingContext2D, arenaWidth: number, hits: number) {
-  const digits = String(hits).split("").map(Number);
+function drawScoreboard(ctx: CanvasRenderingContext2D, arenaWidth: number, score: number) {
+  const digits = String(score).split("").map(Number);
   const digitsWidth = digits.length * SCORE_DIGIT_WIDTH + (digits.length - 1) * SCORE_DIGIT_GAP;
 
   ctx.font = SCORE_LABEL_FONT;
@@ -435,10 +464,10 @@ export interface ButtonBounds {
   height: number;
 }
 
-function drawGameOverOverlay(ctx: CanvasRenderingContext2D, arenaWidth: number, hits: number): ButtonBounds {
+function drawGameOverOverlay(ctx: CanvasRenderingContext2D, arenaWidth: number, score: number): ButtonBounds {
   const centerX = arenaWidth / 2;
   const centerY = ARENA_HEIGHT / 2;
-  const subtitleText = `Final score: ${hits}`;
+  const subtitleText = `Final score: ${score}`;
 
   ctx.font = GAME_OVER_TITLE_FONT;
   const titleWidth = ctx.measureText(GAME_OVER_TITLE).width;
@@ -599,15 +628,16 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
 
     ctx.globalAlpha = state.status === "lost" ? 0.4 : 1;
 
-    drawObstacles(ctx, arenaWidth);
+    drawObstacles(ctx, arenaWidth, state.elapsedMs);
+    if (state.target) drawTarget(ctx, state.target);
 
     const squashAmount = squashTimer / SQUASH_DURATION_MS;
     drawRacquet(ctx, state.paddle);
     drawBall(ctx, state.ball, squashAmount);
 
     ctx.globalAlpha = 1;
-    drawScoreboard(ctx, arenaWidth, state.hits);
-    newGameButtonBounds = state.status === "lost" ? drawGameOverOverlay(ctx, arenaWidth, state.hits) : null;
+    drawScoreboard(ctx, arenaWidth, state.score);
+    newGameButtonBounds = state.status === "lost" ? drawGameOverOverlay(ctx, arenaWidth, state.score) : null;
 
     ctx.restore();
   }
@@ -637,6 +667,7 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
         ...state,
         paddle,
         ball: { ...state.ball, x: pointerX, y: paddle.y - paddle.height / 2 - state.ball.radius },
+        elapsedMs: state.elapsedMs + elapsed,
       };
     }
 
