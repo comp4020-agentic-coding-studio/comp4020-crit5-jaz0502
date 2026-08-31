@@ -79,6 +79,26 @@ export interface StepConfig {
   maxSpeed?: number;
   maxBounceAngle?: number;
   rng?: () => number; // injectable for deterministic tests; defaults to Math.random
+  paddleShrinkPerHit?: number;
+  obstaclesEnabled?: boolean;
+}
+
+export type Difficulty = "easy" | "medium" | "hard";
+
+// Difficulty just picks which of the ramps StepConfig already exposes are
+// switched on --- easy turns them all off, medium turns on obstacles and the
+// paddle shrink but not the speed ramp, hard turns everything on. A lookup
+// rather than scattered conditionals, so the view has one function to call
+// when building each frame's StepConfig for the chosen difficulty.
+export function stepConfigForDifficulty(difficulty: Difficulty): StepConfig {
+  switch (difficulty) {
+    case "easy":
+      return { obstaclesEnabled: false, paddleShrinkPerHit: 1, speedGainPerHit: 1 };
+    case "medium":
+      return { obstaclesEnabled: true, paddleShrinkPerHit: PADDLE_SHRINK_PER_HIT, speedGainPerHit: 1 };
+    case "hard":
+      return { obstaclesEnabled: true, paddleShrinkPerHit: PADDLE_SHRINK_PER_HIT, speedGainPerHit: SPEED_GAIN_PER_HIT };
+  }
 }
 
 // Static blocks the ball can bounce off, sitting between the top wall and
@@ -212,9 +232,10 @@ function ballHitsTarget(ball: Ball, target: Target): boolean {
 
 // Recomputed from scratch every frame (see step() below) rather than shrunk
 // incrementally, so it's always an exact function of hits --- no drift, and
-// no need to carry a running width in GameState.
-function paddleWidthForHits(arenaWidth: number, hits: number): number {
-  const ratio = Math.max(PADDLE_WIDTH_RATIO * Math.pow(PADDLE_SHRINK_PER_HIT, hits), MIN_PADDLE_WIDTH_RATIO);
+// no need to carry a running width in GameState. shrinkPerHit is 1 (no
+// shrink at all) on easy, so a hits=0 paddle is the same size regardless.
+function paddleWidthForHits(arenaWidth: number, hits: number, shrinkPerHit: number): number {
+  const ratio = Math.max(PADDLE_WIDTH_RATIO * Math.pow(shrinkPerHit, hits), MIN_PADDLE_WIDTH_RATIO);
   return arenaWidth * ratio;
 }
 
@@ -222,7 +243,7 @@ export function createInitialState(arenaWidth: number, paddleCenterX: number = a
   const paddle: Paddle = {
     x: paddleCenterX,
     y: PADDLE_Y,
-    width: paddleWidthForHits(arenaWidth, 0),
+    width: paddleWidthForHits(arenaWidth, 0, PADDLE_SHRINK_PER_HIT),
     height: PADDLE_HEIGHT,
   };
   return {
@@ -300,10 +321,16 @@ export function step(
   const speedGainPerHit = config.speedGainPerHit ?? SPEED_GAIN_PER_HIT;
   const maxSpeed = config.maxSpeed ?? MAX_SPEED;
   const rng = config.rng ?? Math.random;
+  const paddleShrinkPerHit = config.paddleShrinkPerHit ?? PADDLE_SHRINK_PER_HIT;
+  const obstaclesEnabled = config.obstaclesEnabled ?? true;
   const dt = dtMs / 1000;
 
   const elapsedMs = state.elapsedMs + dtMs;
-  const paddle: Paddle = { ...state.paddle, x: paddleCenterX, width: paddleWidthForHits(arenaWidth, state.hits) };
+  const paddle: Paddle = {
+    ...state.paddle,
+    x: paddleCenterX,
+    width: paddleWidthForHits(arenaWidth, state.hits, paddleShrinkPerHit),
+  };
   const moved: Ball = {
     ...state.ball,
     x: state.ball.x + state.ball.vx * dt,
@@ -312,11 +339,13 @@ export function step(
   const bounced = withWallBounces(moved, arenaWidth);
 
   let deflected = bounced;
-  for (const obstacle of obstaclesForArena(arenaWidth, elapsedMs)) {
-    const resolved = resolveObstacleCollision(deflected, obstacle);
-    if (resolved) {
-      deflected = resolved;
-      break;
+  if (obstaclesEnabled) {
+    for (const obstacle of obstaclesForArena(arenaWidth, elapsedMs)) {
+      const resolved = resolveObstacleCollision(deflected, obstacle);
+      if (resolved) {
+        deflected = resolved;
+        break;
+      }
     }
   }
 

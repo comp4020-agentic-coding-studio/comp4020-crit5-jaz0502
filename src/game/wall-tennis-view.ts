@@ -8,6 +8,8 @@ import {
   createInitialState,
   obstaclesForArena,
   step,
+  stepConfigForDifficulty,
+  type Difficulty,
   type GameState,
   type Obstacle,
   type Target,
@@ -534,6 +536,86 @@ function isInsideBounds(x: number, y: number, bounds: ButtonBounds): boolean {
   return x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height;
 }
 
+// Difficulty picker: same plaque styling as the game-over overlay, shown
+// before the very first round and again after "New game" so the player can
+// change difficulty each round. Colour-coded green/gold/red so the ramp in
+// difficulty reads at a glance, same language as the target bullseye's red.
+const DIFFICULTY_TITLE = "SELECT DIFFICULTY";
+const DIFFICULTY_TITLE_FONT = "bold 30px 'Courier New', monospace";
+const DIFFICULTY_TITLE_SIZE = 30;
+const DIFFICULTY_BUTTON_FONT = "bold 20px 'Courier New', monospace";
+const DIFFICULTY_BUTTON_FONT_SIZE = 20;
+const DIFFICULTY_BUTTON_PADDING_X = 22;
+const DIFFICULTY_BUTTON_PADDING_Y = 14;
+const DIFFICULTY_BUTTON_GAP = 18;
+const DIFFICULTY_BUTTON_BORDER = 3;
+const DIFFICULTY_BUTTON_BORDER_COLOR = "#1e2a5e"; // matches the game-over button's navy collar bands
+const DIFFICULTY_BUTTON_TEXT_COLOR = "#0b1220";
+const DIFFICULTY_OPTIONS: { difficulty: Difficulty; label: string; color: string }[] = [
+  { difficulty: "easy", label: "EASY", color: "#3fae7a" },
+  { difficulty: "medium", label: "MEDIUM", color: "#f0c040" },
+  { difficulty: "hard", label: "HARD", color: "#e63946" },
+];
+
+function drawDifficultySelect(ctx: CanvasRenderingContext2D, arenaWidth: number): Record<Difficulty, ButtonBounds> {
+  const centerX = arenaWidth / 2;
+  const centerY = ARENA_HEIGHT / 2;
+
+  ctx.font = DIFFICULTY_BUTTON_FONT;
+  const buttonHeight = DIFFICULTY_BUTTON_FONT_SIZE + DIFFICULTY_BUTTON_PADDING_Y * 2;
+  const buttonWidths = DIFFICULTY_OPTIONS.map((option) => ctx.measureText(option.label).width + DIFFICULTY_BUTTON_PADDING_X * 2);
+  const buttonsWidth = buttonWidths.reduce((total, width) => total + width, 0) + DIFFICULTY_BUTTON_GAP * (DIFFICULTY_OPTIONS.length - 1);
+
+  ctx.font = DIFFICULTY_TITLE_FONT;
+  const titleWidth = ctx.measureText(DIFFICULTY_TITLE).width;
+
+  const panelWidth = Math.max(titleWidth, buttonsWidth) + GAME_OVER_PANEL_PADDING_X * 2;
+  const panelHeight = DIFFICULTY_TITLE_SIZE + DIFFICULTY_BUTTON_GAP + buttonHeight + GAME_OVER_PANEL_PADDING_Y * 2;
+  const panelX = centerX - panelWidth / 2;
+  const panelY = centerY - panelHeight / 2;
+
+  ctx.fillStyle = SCORE_PANEL_BEZEL;
+  ctx.fillRect(panelX, panelY, panelWidth, panelHeight);
+  ctx.fillStyle = SCORE_PANEL_BG;
+  ctx.fillRect(
+    panelX + SCORE_PANEL_BORDER,
+    panelY + SCORE_PANEL_BORDER,
+    panelWidth - SCORE_PANEL_BORDER * 2,
+    panelHeight - SCORE_PANEL_BORDER * 2,
+  );
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = DIFFICULTY_TITLE_FONT;
+  ctx.fillStyle = GAME_OVER_TEXT_COLOR;
+  ctx.fillText(DIFFICULTY_TITLE, centerX, panelY + GAME_OVER_PANEL_PADDING_Y + DIFFICULTY_TITLE_SIZE / 2);
+
+  const buttonY = panelY + GAME_OVER_PANEL_PADDING_Y + DIFFICULTY_TITLE_SIZE + DIFFICULTY_BUTTON_GAP;
+  let buttonX = centerX - buttonsWidth / 2;
+  const bounds = {} as Record<Difficulty, ButtonBounds>;
+
+  ctx.font = DIFFICULTY_BUTTON_FONT;
+  DIFFICULTY_OPTIONS.forEach((option, i) => {
+    const width = buttonWidths[i];
+    ctx.fillStyle = DIFFICULTY_BUTTON_BORDER_COLOR;
+    ctx.fillRect(
+      buttonX - DIFFICULTY_BUTTON_BORDER,
+      buttonY - DIFFICULTY_BUTTON_BORDER,
+      width + DIFFICULTY_BUTTON_BORDER * 2,
+      buttonHeight + DIFFICULTY_BUTTON_BORDER * 2,
+    );
+    ctx.fillStyle = option.color;
+    ctx.fillRect(buttonX, buttonY, width, buttonHeight);
+    ctx.fillStyle = DIFFICULTY_BUTTON_TEXT_COLOR;
+    ctx.fillText(option.label, buttonX + width / 2, buttonY + buttonHeight / 2);
+
+    bounds[option.difficulty] = { x: buttonX, y: buttonY, width, height: buttonHeight };
+    buttonX += width + DIFFICULTY_BUTTON_GAP;
+  });
+
+  return bounds;
+}
+
 export function startWallTennis(canvas: HTMLCanvasElement): () => void {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("2D canvas context unavailable");
@@ -547,6 +629,8 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
   let hitsSeen = 0;
   let squashTimer = 0;
   let newGameButtonBounds: ButtonBounds | null = null;
+  let difficulty: Difficulty | null = null;
+  let difficultyButtonBounds: Record<Difficulty, ButtonBounds> | null = null;
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -581,18 +665,25 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
   let state: GameState = createInitialState(arenaTransform().arenaWidth);
   pointerX = state.paddle.x;
 
-  // While the round is lost, the ball's frozen and the paddle no longer
-  // follows the pointer --- the only way back into a fresh round is clicking
-  // the "New game" button drawn inside the game-over plaque.
+  // No difficulty chosen yet: the game sits frozen and dimmed behind the
+  // difficulty plaque until the player picks easy/medium/hard. While the
+  // round is lost, the ball's frozen and the paddle no longer follows the
+  // pointer --- the only way back is clicking "New game", which returns to
+  // the difficulty plaque so the player can pick again each round.
   function onPointer(event: PointerEvent) {
     const { arenaWidth } = arenaTransform();
     const arenaX = Math.max(0, Math.min(arenaWidth, toArenaX(event.clientX)));
 
-    if (state.status === "lost") {
+    if (difficulty === null) {
       const arenaY = toArenaY(event.clientY);
-      const overButton = newGameButtonBounds !== null && isInsideBounds(arenaX, arenaY, newGameButtonBounds);
-      canvas.style.cursor = overButton ? "pointer" : "default";
-      if (event.type === "pointerdown" && overButton) {
+      const hovered = difficultyButtonBounds
+        ? (Object.entries(difficultyButtonBounds) as [Difficulty, ButtonBounds][]).find(([, bounds]) =>
+            isInsideBounds(arenaX, arenaY, bounds),
+          )
+        : undefined;
+      canvas.style.cursor = hovered ? "pointer" : "default";
+      if (event.type === "pointerdown" && hovered) {
+        difficulty = hovered[0];
         // Always re-center horizontally --- the ball (and the paddle under
         // it) start from the arena's midpoint, not wherever the player
         // happened to click the button.
@@ -600,6 +691,16 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
         pointerX = state.paddle.x;
         hitsSeen = 0;
         launched = false;
+      }
+      return;
+    }
+
+    if (state.status === "lost") {
+      const arenaY = toArenaY(event.clientY);
+      const overButton = newGameButtonBounds !== null && isInsideBounds(arenaX, arenaY, newGameButtonBounds);
+      canvas.style.cursor = overButton ? "pointer" : "default";
+      if (event.type === "pointerdown" && overButton) {
+        difficulty = null;
       }
       return;
     }
@@ -626,9 +727,10 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
 
     drawCourt(ctx, arenaWidth);
 
-    ctx.globalAlpha = state.status === "lost" ? 0.4 : 1;
+    ctx.globalAlpha = difficulty === null || state.status === "lost" ? 0.4 : 1;
 
-    drawObstacles(ctx, arenaWidth, state.elapsedMs);
+    const obstaclesEnabled = difficulty !== null && (stepConfigForDifficulty(difficulty).obstaclesEnabled ?? true);
+    if (obstaclesEnabled) drawObstacles(ctx, arenaWidth, state.elapsedMs);
     if (state.target) drawTarget(ctx, state.target);
 
     const squashAmount = squashTimer / SQUASH_DURATION_MS;
@@ -637,7 +739,17 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
 
     ctx.globalAlpha = 1;
     drawScoreboard(ctx, arenaWidth, state.score);
-    newGameButtonBounds = state.status === "lost" ? drawGameOverOverlay(ctx, arenaWidth, state.score) : null;
+
+    if (difficulty === null) {
+      difficultyButtonBounds = drawDifficultySelect(ctx, arenaWidth);
+      newGameButtonBounds = null;
+    } else if (state.status === "lost") {
+      newGameButtonBounds = drawGameOverOverlay(ctx, arenaWidth, state.score);
+      difficultyButtonBounds = null;
+    } else {
+      newGameButtonBounds = null;
+      difficultyButtonBounds = null;
+    }
 
     ctx.restore();
   }
@@ -649,17 +761,18 @@ export function startWallTennis(canvas: HTMLCanvasElement): () => void {
 
     const { scale, arenaWidth } = arenaTransform();
 
-    if (state.status === "playing" && launched) {
+    if (difficulty !== null && state.status === "playing" && launched) {
+      const stepConfig = stepConfigForDifficulty(difficulty);
       accumulator += elapsed;
       while (accumulator >= FIXED_DT_MS) {
-        state = step(state, FIXED_DT_MS, pointerX, arenaWidth);
+        state = step(state, FIXED_DT_MS, pointerX, arenaWidth, stepConfig);
         accumulator -= FIXED_DT_MS;
       }
       if (state.hits > hitsSeen) {
         hitsSeen = state.hits;
         squashTimer = SQUASH_DURATION_MS;
       }
-    } else if (state.status === "playing") {
+    } else if (difficulty !== null && state.status === "playing") {
       // Not launched yet: the ball rides the paddle so the opening frame
       // reads as "aim, then go" with no caption needed.
       const paddle = { ...state.paddle, x: pointerX };
